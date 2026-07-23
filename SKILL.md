@@ -68,49 +68,103 @@ Read: config/user-profile.yaml
 
 ## 核心工作流程
 
-## 阶段一：数据源检测 + 自动配置 mcp-jobs
+## 阶段一：数据源检测 + 强制自动配置 mcp-jobs ⚠️ 不要跳过此阶段
 
-**核心原则：优先使用 mcp-jobs（结构化的真实岗位数据），检测不到则自动安装，安装失败则 WebSearch 回退。**
+**🚨 关键原则：检测到 mcp-jobs 不可用时，**第一个动作必须是尝试安装**，绝对不能直接跳到 WebSearch 回退。WebSearch 仅在 npm install + git clone 全部失败后才使用。**
 
-### 三步检测与安装流程
+### 强制执行流程（命令式，不允许跳步）
+
+> **无论用户说什么，先执行下方步骤 1。** 哪怕用户当前环境"看起来没装"，也要先尝试安装并写 MCP 配置。
 
 ```
-┌─ 步骤1：检测 mcp_search_job 是否可调用
-│   ├─ 可用 → 直接使用（跳到阶段二）
-│   └─ 不可用 → 进入步骤2
-│
-├─ 步骤2：尝试自动安装 mcp-jobs
-│   │
-│   │  判断当前平台：
-│   │
-│   ├─ WorkBuddy 平台（特征：存在 ~/.workbuddy/ 目录）
-│   │   ├─ 安装 npm 包：
-│   │   │   cd ~/.workbuddy/binaries/node/workspace
-│   │   │   npm install mcp-jobs
-│   │   │   npx playwright install chromium
-│   │   ├─ 写入 MCP 配置到 ~/.workbuddy/mcp.json：
-│   │   │   {
-│   │   │     "mcpServers": {
-│   │   │       "mcp-jobs": {
-│   │   │         "command": "npx",
-│   │   │         "args": ["-y", "mcp-jobs"],
-│   │   │         "disabled": false
-│   │   │       }
-│   │   │     }
-│   │   │   }
-│   │   └─ 提示用户：「mcp-jobs 已安装，请到连接器管理页面点击 Trust 启用，
-│   │   │              然后回复'继续'我将重新检测并开始搜索岗位」
-│   │   └─ 等待用户确认后重新检测
-│   │
-│   └─ 其他平台（Claude Code / Cursor / 通用）
-│       ├─ 指导用户安装（参考 references/mcp-jobs-setup.md）：
-│       │   npm install -g mcp-jobs
-│       │   并配置 MCP 客户端
-│       └─ 如用户表示无法/不想安装 → 跳过，使用步骤3
-│
-└─ 步骤3：WebSearch 回退（任何平台可用）
-    └─ 使用搜索引擎 + site:zhipin.com/liepin.com 限定范围
-       能覆盖大部分岗位，质量略低但完全可用
+步骤 1：检测 mcp_search_job 是否可调用
+   └─ 是 → 直接用（跳到阶段二）
+   └─ 否 ↓
+   ↓
+步骤 2：立即执行安装（必须先做，不要跳到 WebSearch）
+   │
+   │   信息源：
+   │   - GitHub: https://github.com/mergedao/mcp-jobs
+   │   - npm:   mcp-jobs（@mergedao）
+   │
+   │   按平台分支：
+   │
+   ├─ WorkBuddy 平台（存在 ~/.workbuddy/ 目录）：
+   │   │
+   │   2a. npm install（首选）：
+   │       cd ~/.workbuddy/binaries/node/workspace
+   │       npm install mcp-jobs
+   │       npx playwright install chromium
+   │       失败 ↓
+   │   2b. GitHub clone（备选）：
+   │       git clone https://github.com/mergedao/mcp-jobs.git ~/.workbuddy/mcp-jobs
+   │       cd ~/.workbuddy/mcp-jobs && npm install && npm link
+   │       npx playwright install chromium
+   │       失败 ↓
+   │   2c. 写 MCP 配置（必须做，不允许跳）：
+   │       Edit ~/.workbuddy/mcp.json：
+   │       {
+   │         "mcpServers": {
+   │           "mcp-jobs": {
+   │             "command": "npx",
+   │             "args": ["-y", "mcp-jobs"],
+   │             "disabled": false
+   │           }
+   │         }
+   │       }
+   │   2d. **必须用 Read 工具读一次 mcp.json 确认写入成功**
+   │   2e. 提示用户：「mcp-jobs 已配置，请到连接器管理页面点击 Trust 启用，
+   │       然后回复'继续'我将重新检测并开始搜索岗位」
+   │   2f. 等待用户确认后重新检测
+   │
+   └─ 其他平台（Claude Code / Cursor / 通用）：
+       2a. npm install -g mcp-jobs
+       2b. 失败 → git clone https://github.com/mergedao/mcp-jobs.git
+                  cd mcp-jobs && npm install && npm link
+       2c. 配置 MCP 客户端（Claude: ~/.claude/mcp.json, Cursor: Settings → MCP）
+       2d. 告诉用户：必须重启 MCP 客户端使配置生效
+       ↓
+   ↓
+步骤 3：仅当步骤 2 全部失败时，才使用 WebSearch 回退
+   └─ 用 site:zhipin.com / site:liepin.com 限定范围
+```
+
+### ❌ 错误行为（必须避免）
+
+下面这些是"偷懒"行为，**任何一项出现都视为协议违规**：
+
+1. ❌ 检测到 mcp-jobs 不可用 → 直接走 WebSearch，不尝试安装
+2. ❌ 试了 npm install 失败就立刻放弃，不试 GitHub clone
+3. ❌ 跳过 MCP 配置写入步骤
+4. ❌ 没向用户报告安装进展
+5. ❌ 用 `accio mcp-cli search mcp-jobs` 这种空查询假装"找不到就放弃"
+
+### ✅ 合规示例（agent 应当这样回复）
+
+```
+🔍 检测 mcp-jobs 状态：未激活
+
+📦 执行安装步骤 1：npm install mcp-jobs
+   正在下载... ✅ 完成
+
+📝 写入 MCP 配置 ~/.workbuddy/mcp.json
+   ✅ 已写入
+   验证：{"mcpServers":{"mcp-jobs":{"command":"npx","args":["-y","mcp-jobs"]}}}
+
+⏸️ 等待用户操作：
+   1. 打开「连接器管理」页面
+   2. 找到 mcp-jobs，点击「Trust」启用
+   3. 回复「继续」让我重新检测并开始搜索
+```
+
+### ✅ 失败兜底示例（npm 和 GitHub 都不可用时）
+
+```
+🔍 检测 mcp-jobs 状态：未激活
+📦 npm install mcp-jobs... ❌ 失败（npm 不可用）
+📦 git clone https://github.com/mergedao/mcp-jobs.git... ❌ 失败（无 git 或无网络）
+⚠️ mcp-jobs 安装失败
+🔄 回退到 WebSearch 路径（阶段二 路径 B）
 ```
 
 ### 安装成功后的验证
@@ -178,16 +232,23 @@ mcp_search_job 可用后，验证搜索是否正常：
 | **中匹配** | 行业相近 或 经验接近 或 有部分交集 |
 | **目标岗** | 当前不匹配但可作为发展目标的高级岗位 |
 
-#### 四层分级体系（按公司实力）
+#### 四层分级体系（按公司实力）— 附带强制 CSS 类绑定
 
-每层使用独立的视觉标识：
+**规则：Tier 层级与 CSS 类是强制一对一绑定的。如果报告中任意卡片未使用下表对应类，则报告不合规。**
 
-| 层级 | 标准 | 示例公司（物流领域） | CSS类 |
-|------|------|---------------------|-------|
-| **Tier 1 外企巨头** | 全球500强 / 行业全球Top3 | Amazon, Apple, Maersk, DHL, Flexport | `tier-1` 金色 |
-| **Tier 2 互联网大厂** | 千亿市值 / 平台级 | 阿里巴巴/蚂蚁, 美团, 拼多多, 字节, NIO | `tier-2` 蓝色 |
-| **Tier 3 行业独角兽/上市** | 细分赛道头部 / 快速成长 | 极兔, 壹米滴答, 申通, 满帮 | `tier-3` 绿色 |
-| **Tier 4 远程/灵活** | 国际化远程团队 / 创业 | 按目标行业动态确定 | `tier-4` 紫色 |
+| 层级 | 标准 | 强制 CSS 类 | 触发条件 | 示例公司 |
+|------|------|-----------|---------|---------|
+| **Tier 1** 🥇 | 全球500强 / 行业全球Top3 | `rec-star` | 只要属于 Tier 1 即触发 | Amazon, Maersk, DHL, Goldman Sachs |
+| **Tier 2** 🥈 | 千亿市值 / 平台级 | `rec` | 只要属于 Tier 2 即触发 | 蚂蚁, 美团, 拼多多, 字节 |
+| **Tier 3** 🥉 | 细分赛道头部 / 快速成长 | `job-card`（默认） | Tier 3 使用基础卡片样式 | 极兔, 壹米滴答, 申通 |
+| **Tier 4** 💜 | 远程/国际化团队 | `job-card`（默认） | Tier 4 使用基础卡片样式 | 讴谱, Gradual |
+
+**合规校验规则**：
+- 报告中 Tier 1 卡片数 ≥ 3 时，HTML 中必须出现 ≥3 次 `class="job-card rec-star"` 或 `rec-star`
+- 报告中 Tier 2 卡片数 ≥ 3 时，HTML 中必须出现 ≥3 次 `class="job-card rec"` 或 `" rec"`
+- 如上述任一条件不满足，**删除该报告重新生成**，不得以缺少 CSS 类的卡片交差
+
+**tier-badge 同样强制绑定**：
 
 **行业适配规则**：根据用户的目标行业动态替换每层示例公司：
 
@@ -244,6 +305,54 @@ mcp_search_job 可用后，验证搜索是否正常：
 
 一段有力总结，帮用户看清定位、最优路径和关键行动。
 
+## 📋 强制输出协议 (Mandatory Output Protocol)
+
+**⚠️ 在生成 HTML 报告之前，必须依次完成以下两步。跳过任一步骤直接输出 HTML 视为违规。**
+
+### 第一步：进度状态表 (Stage Checkpoint)
+
+在回复中**显式输出**以下进度确认表。每项必须如实标记 ✅ 或 ❌：
+
+```
+| 阶段 | 状态 | 产出物 | 自检 |
+|------|------|--------|------|
+| 阶段零 | ✅/❌ | 用户画像已读取/已收集 | 画像 ≥5 个字段 |
+| 阶段一 | ✅/❌ | 数据源已就绪 | mcp-jobs 或 WebSearch 可用 |
+| 阶段二 | ✅/❌ | 搜索完成，已保留 ≥10 个有效 URL | 每个 URL 指向具体岗位 |
+| 阶段三 | ✅/❌ | 岗位已按四层分级，附录CSS类已绑定 | Tier 1→rec-star, Tier 2→rec |
+| 阶段四 | ✅/❌ | 6维度能力模型已提炼 | 每维度 ≥4 知识点 |
+| 阶段五 | ✅/❌ | 优势+短板+层级匹配度表格已完成 | 匹配度与经验对得上 |
+| 阶段六 | ✅/❌ | 3步行动建议已定制 | 投递优先级与匹配度自洽 |
+| 阶段七 | ✅/❌ | 薪资矩阵已填充 | 区间与JD一致 |
+| 阶段八 | ✅/❌ | 核心结论已草拟 | 含定位+路径+关键行动 |
+```
+
+**若上表中任何一行的「状态」列为 ❌，禁止执行 Write 操作生成 HTML。** 必须先补齐该阶段再重新输出进度表。
+
+### 第二步：分析纪要 (Analysis Brief)
+
+在进度表确认全部 ✅ 后、生成 HTML 前，输出一段 **≥200 字**的纯文本分析纪要，
+涵盖以下三个要点：
+
+1. **市场趋势概括**：本次搜索到的岗位反映出哪些行业/技术趋势？（至少 2 个趋势）
+2. **用户核心竞争力**：用户画像与市场需求的契合点是什么？（至少 2 个契合点）
+3. **关键差距与建议**：用户最需要补的 1-2 个短板是什么？最快提升路径？
+
+格式要求：
+- 纯文本，三段的标题用 **加粗**
+- 不使用列表、表格或其他标记
+- 内容基于搜索到的真实 JD 数据，不是泛泛而谈
+
+**示例：**
+
+> **市场趋势：** 本次搜索到 18 个物流行业 AI PM 岗位。Tier 1 外企（Amazon/DHL/Maersk）均要求 5-7 年经验 + 已上线的 AI 产品案例，对 Agentic AI 的关注度显著上升。Tier 2/3 的国内物流公司（极兔/壹米滴答/申通）门槛明显更低（3-5 年，了解 AI 即可），且正处数字化转型加速期，AI PM 岗位从年初的零星几个增长到现在的批量上线。
+>
+> **核心竞争力：** 用户的物流行业 5 年经验（订单/运单/计费全流程）是区别于纯互联网 AI PM 的最大护城河。极兔的智能路由、壹米滴答的 RAG 知识库、蚂蚁国际的跨境物流 AI 助手这三个场景与用户背景直接对应。985 硕士学历满足 Tier 1 外企的硬性门槛。
+>
+> **关键差距：** 最大短板是缺少可展示的 AI 项目实战经验。最快提升路径是花 2-3 周用 LangChain 做一个「快递运单查询 Agent」原型（覆盖 RAG + Agent 两个核心概念），放在 GitHub 上作为面试作品。
+
+**分析纪要输出后，方可进入 HTML 报告生成阶段。**
+
 ## 报告样式规范
 
 使用 `assets/report-template.html` 中的 CSS 体系生成报告。核心设计：
@@ -257,15 +366,27 @@ mcp_search_job 可用后，验证搜索是否正常：
 - **响应式**：`@media (max-width: 640px)` 移动端适配
 - **字体**：系统字体栈 `-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif`
 
-### 岗位卡片字段规范 ⚠️ 必须严格遵守，缺任意一项则该卡片无效
+### 岗位卡片 = 5 变量强制对象 ⚠️ 缺任意变量则该卡片无效
 
-**每个 `.job-card` 是独立的信息单元，必须包含以下 6 类字段，不可省略：**
+**每个岗位卡片是一个包含 5 个必填变量的不可分割对象。生成 HTML 前必须用以下结构逐卡校验：**
 
-#### 1. 公司名 + 标签系统（必须，基于搜索事实动态生成）
+```
+变量组 JobCard = {
+  Company_Info,        // 变量1: 公司名 + 实力标签 + 匹配度标签 + CSS强制类
+  Job_Detail,          // 变量2: 岗位标题 + 元信息行(📍💰📋)
+  Real_Link,           // 变量3: ≥1个真实可点击URL (非占位符, 非#, 非搜索页)
+  Match_Score_Tags,    // 变量4: ≥1个实力标签 + ≥1个匹配度标签
+  Specific_Highlight_Comment  // 变量5: 1-2句针对用户背景的匹配度评语
+}
+```
+
+**严禁缺项。** 如果一个岗位无法完整填充这 5 个变量，**丢弃该岗位，不出现在报告中。**
+
+#### 变量1: Company_Info（公司名 + 标签系统）
 
 标签不可使用占位符或通用文本。根据搜索到的真实公司信息，从以下规则中选择匹配的标签：
 
-**实力标签（必选3-5个，反映公司真实身份）：**
+**实力标签（必选≥2个，反映公司真实身份）：**
 
 | 标签类型 | 示例 | 生成规则 |
 |---------|------|---------|
@@ -274,7 +395,7 @@ mcp_search_job 可用后，验证搜索是否正常：
 | 行业地位 | `全球电商第一` `全球最大航运` `物流巨头` `行业Top3` `AAAAA级物流` | 必须基于可验证的市场数据 |
 | 全球化程度 | `全球化快递` `国际化` `出海` | 有海外业务才标注 |
 
-**匹配度标签（必选1-2个，反映与用户画像的匹配程度）：**
+**匹配度标签（必选≥1个，反映与用户画像的匹配程度）：**
 
 | 标签 | 使用条件 |
 |------|---------|
@@ -288,9 +409,7 @@ mcp_search_job 可用后，验证搜索是否正常：
 - 实力标签：`.tag-green`（外企）、`.tag-gold`（500强）、`.tag-blue`（国内大厂）、`.tag-teal`（远程）、`.tag-purple`（推荐）
 - 匹配度标签：`.tag-purple` 或直接用 `rec-star` 类标记整张卡片
 
-**❌ 禁止行为：** 生成 `查看职位 →` 等无实际 URL 的伪链接；使用 `猎聘 →`、`BOSS直聘 →` 等无具体岗位 URL 的平台名称链接；使用 `详情见JD`、`官网可查` 等描述替代链接。
-
-#### 2. 招聘链接（必须，一个岗位至少 1 个真实 URL）
+#### 变量2: 招聘链接 Real_Link（必须，≥1 个真实 URL）
 
 **链接来源规则：**
 
@@ -308,42 +427,55 @@ mcp_search_job 可用后，验证搜索是否正常：
 
 **同一岗位有多个来源时，列出所有可用链接。** 例如：猎聘链接 + 公司官网链接。
 
-#### 3. 岗位标题
+#### 变量3: Job_Detail（岗位标题 + 元信息行）
 
-保留原语言。外企岗位用英文标题，国内岗位用中文标题。
+岗位标题保留原语言。外企岗位用英文标题，国内岗位用中文标题。
 
-#### 4. 元信息行
-
+元信息行格式：
 ```
 <span>📍 [城市/区域]</span><span>💰 [月薪范围]</span><span>📋 [经验要求]</span>
 ```
-
 薪资未知时标注 `有竞争力` 或 `面议`。
 
-#### 5. 核心要求摘要（3-5 条要点）
+#### 变量4: Match_Score_Tags（标签系统，必须≥2个）
+
+标签不可使用占位符或通用文本。根据搜索到的真实公司信息，从以下规则中选择匹配的标签：
+
+**实力标签（必选≥2个，反映公司真实身份）：**
+
+**❌ 禁止行为：** 生成 `查看职位 →` 等无实际 URL 的伪链接；使用 `猎聘 →`、`BOSS直聘 →` 等无具体岗位 URL 的平台名称链接；使用 `详情见JD`、`官网可查` 等描述替代链接。
+
+#### 变量5: Specific_Highlight_Comment（核心要求 + 匹配度评语）
+
+**核心要求摘要（3-5 条要点）：**
 
 从 JD 中提取最关键的 3-5 条要求，用 `<br>` 分隔。每条前面加粗关键词。
 
-#### 6. 匹配度评语
+**匹配度评语：**
 
-用 `<span class="highlight">` 包裹，1-2 句话说明为什么这个岗位适合/不适合用户。
+用 `<span class="highlight">` 包裹，1-2 句话说明为什么这个岗位适合/不适合用户。**严禁使用通用模板文本**（如"该岗位与你的背景匹配"），必须引用用户的具体经验（如"你的运单管理经验可以直接应用于该岗位的智能路由场景"）。
 
-### 岗位卡片 HTML 示例（完整模板）
+### 岗位卡片 HTML 示例（完整 5 变量填充模板）
 
 ```html
-<div class="job-card rec-star">
+<!-- JobCard = {Company_Info, Job_Detail, Real_Link, Match_Score_Tags, Specific_Highlight_Comment} -->
+<div class="job-card rec-star"> <!-- Tier 1 强制使用 rec-star -->
   <div class="company-row">
+    <!-- 变量1+4: Company_Info + Match_Score_Tags -->
     <strong>Amazon (亚马逊)</strong>
     <span class="tag tag-gold">全球第一电商·500强</span>
     <span class="tag tag-purple">强烈推荐</span>
+    <!-- 变量2: Real_Link -->
     <a class="job-link" href="https://www.amazon.jobs/zh/jobs/10465398/senior-ai-product-manager" target="_blank">查看职位 →</a>
     <a class="job-link" href="https://www.amazon.jobs/zh/" target="_blank">Amazon Jobs →</a>
   </div>
+  <!-- 变量3: Job_Detail -->
   <div class="title">Senior AI Product Manager, Amazon Global Selling</div>
   <div class="meta-row">
     <span>📍 上海</span><span>💰 65-95K/月</span><span>📋 7年+PM</span>
   </div>
   <div class="reqs">
+    <!-- 变量5: Specific_Highlight_Comment -->
     <strong>核心要求：</strong>中英文流利；GenAI/Agentic AI产品经验；跨区域协作能力；A/B测试和模型评测。<br>
     <span class="highlight">匹配点：物流供应链场景经验是独特优势。差距：需要7年+高级PM经验</span>
   </div>
@@ -352,16 +484,14 @@ mcp_search_job 可用后，验证搜索是否正常：
 
 ### 岗位卡片生成前自检 ⚠️
 
-在输出 HTML 前，对每个 `.job-card` 逐项确认：
+在输出 HTML 前，对每个 JobCard 5 变量逐项确认：
 
-- [ ] 公司名是否准确？（搜索到的真实名称）
-- [ ] 是否有 ≥1 个公司性质标签 + ≥1 个实力标签？（不能都是通用标签）
-- [ ] 是否有 ≥1 个匹配度标签？（推荐/最佳匹配/未来目标等）
-- [ ] 是否有 ≥1 个真实的 `href` URL？（不是占位符，不是 `#`，不是搜索页面）
-- [ ] URL 是否是搜索阶段返回的具体岗位链接？（不是手写的，不是猜测的）
-- [ ] 是否已删除所有「搜索不到链接」的岗位卡片？
-- [ ] 元信息行是否有地点、薪资、经验？（三个字段都不能缺）
-- [ ] 匹配度评语是否针对该岗位和用户背景？（不是通用模板）
+- [ ] `Company_Info`：公司名准确？有 ≥2 个实力标签 + ≥1 个匹配度标签？
+- [ ] `Real_Link`：有 ≥1 个真实 `href` URL？不是占位符/`#`/搜索页面？URL 来自搜索阶段？
+- [ ] `Job_Detail`：有岗位标题 + 元信息行(📍💰📋)？三个字段都不缺？
+- [ ] `Match_Score_Tags`：标签不是通用文本？基于搜索到的真实公司信息？
+- [ ] `Specific_Highlight_Comment`：评语引用了用户的具体经验？不是"该岗位匹配你的背景"这种模板话术？
+- [ ] 是否已删除所有「搜索不到链接」或「无法填充 5 变量」的岗位？
 
 ## 通用注意事项（跨平台）
 
@@ -374,15 +504,21 @@ mcp_search_job 可用后，验证搜索是否正常：
 
 ## 报告逻辑检查清单
 
-生成报告前逐项校验：
+**在开始 Write HTML 前逐项校验。全部通过后方可输出文件。**
 
+- [ ] **进度状态表已输出且全部 ✅**（强制输出协议第一步已完成）
+- [ ] **分析纪要已输出且 ≥200 字**（强制输出协议第二步已完成）
+- [ ] **阶段一已完成**（mcp-jobs 已激活，或已尝试 npm install + git clone 后才用 WebSearch）
+- [ ] **未触发"未激活即直接 WebSearch"的违规行为**
+- [ ] **Tier 1 卡片全部使用 `rec-star` 类**（统计: rec-star 出现次数 ≥ Tier 1 卡片数）
+- [ ] **Tier 2 卡片全部使用 `rec` 类**（统计: `" rec"` 出现次数 ≥ Tier 2 卡片数）
 - [ ] 每个 Tier 的岗位数量合理（Tier 1: 3-5，Tier 2: 4-6，Tier 3: 2-4，Tier 4: 1-3）
+- [ ] **每个岗位卡片 5 变量完整**（Company_Info + Job_Detail + Real_Link + Match_Score_Tags + Specific_Highlight_Comment）
 - [ ] **每个岗位卡片有 ≥1 个真实 URL 链接**（检查链接数 = 卡片数）
-- [ ] **每个岗位卡片有 ≥1 个实力标签 + ≥1 个匹配度标签**（逐个检查 `tag-*` 类）
 - [ ] **没有伪链接**（无 `#`、无 `javascript:void(0)`、无搜索页面 URL）
-- [ ] **没有「搜索不到链接」的岗位卡片**（该删的已删）
+- [ ] **没有「搜索不到链接」或「无法填充 5 变量」的岗位卡片**（该删的已删）
+- [ ] **Tier 1 卡片使用 `rec-star`，Tier 2 卡片使用 `rec`**（CSS 类强制绑定已检查）
 - [ ] 能力模型「行业领域知识」维度与用户目标行业一致
-- [ ] 四级分层示例公司与行业适配规则匹配
 - [ ] 差距分析表各Tier匹配度评估与用户经验年限对得上
 - [ ] 行动建议投递优先级与匹配度评估表自洽
 - [ ] 薪资参考表区间与JD实际薪资一致

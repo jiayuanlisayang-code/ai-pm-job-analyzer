@@ -2,7 +2,11 @@
 
 ## 什么是 mcp-jobs
 
-[mcp-jobs](https://www.npmjs.com/package/mcp-jobs) 是一个开源的 MCP 服务器，
+**GitHub 仓库：https://github.com/mergedao/mcp-jobs**
+
+**npm 包：https://www.npmjs.com/package/mcp-jobs**
+
+[mcp-jobs](https://github.com/mergedao/mcp-jobs) 是一个开源的 MCP 服务器（作者 @mergedao），
 提供 `mcp_search_job` 和 `mcp_job_detail` 工具，可以批量搜索猎聘、BOSS直聘、
 智联招聘、51job 等国内招聘平台的真实岗位信息。
 
@@ -10,6 +14,13 @@
 比手写爬虫更稳定（由社区维护，跟随招聘网站更新）。
 
 ## 安装方式
+
+### 方式零：来源选择（优先级递减）
+
+安装时按以下顺序尝试，任一成功即停止：
+
+1. **npm registry**：`npm install -g mcp-jobs`
+2. **GitHub clone**：`git clone https://github.com/mergedao/mcp-jobs.git && cd mcp-jobs && npm install && npm link`
 
 ### 方式一：WorkBuddy（自动配置）
 
